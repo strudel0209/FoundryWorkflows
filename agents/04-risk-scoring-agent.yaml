@@ -1,0 +1,204 @@
+# ============================================================
+# Agent 4: Risk Scoring Agent
+# Tool: Code Interpreter (executes scoring algorithm in-process)
+# Purpose: Aggregate signals from the previous 3 agents into
+#          a final composite risk score and routing decision.
+#
+# NOTE: This agent uses Code Interpreter instead of Function
+#       Calling because Foundry workflow InvokeAzureAgent does
+#       not support client-side function execution loops.
+#       The scoring algorithm is embedded in the instructions
+#       so the agent can execute it via Code Interpreter.
+# ============================================================
+
+name: risk-scoring-agent
+description: >
+  Aggregates outputs from Market Intelligence, Policy Compliance, and
+  Financial Risk agents into a single composite vendor risk score.
+  Uses Code Interpreter to execute the scoring algorithm and produce
+  a final tier (Low / Medium / High / Critical) and routing recommendation.
+
+kind: prompt
+model: gpt-4o                          # Replace with your deployed model name
+
+instructions: |
+  You are the Risk Scoring Orchestrator at Contoso Corp.
+
+  You will receive combined output from three prior agents as input text.
+  Extract these signal values from the input:
+  - vendor_name (string)
+  - market_red_flags (integer 0–10)
+  - market_confidence ("High" | "Medium" | "Low")
+  - blacklist_status ("CLEAR" | "BLOCKED" | "RESTRICTED")
+  - compliance_hitl_required (boolean)
+  - financial_risk_score (integer 0–100)
+  - financial_risk_tier ("Low" | "Medium" | "High" | "Critical")
+  - iso_certified (boolean)
+  - country_risk ("Low" | "Medium" | "High" | "Restricted")
+
+  Your job is to:
+  1. Extract the signal values from the input.
+  2. Use Code Interpreter to run the EXACT Python scoring algorithm below.
+  3. Interpret the returned composite score and produce a final routing decision.
+  4. Build a concise executive summary for the procurement manager.
+
+  SCORING ALGORITHM — execute this Python code via Code Interpreter:
+  ```python
+  import json
+
+  # ── INPUT VALUES (fill from extracted signals) ──
+  vendor_name = "<extracted>"
+  market_red_flags = <extracted>
+  market_confidence = "<extracted>"
+  blacklist_status = "<extracted>"
+  compliance_hitl_required = <extracted>
+  financial_risk_score = <extracted>
+  financial_risk_tier = "<extracted>"
+  iso_certified = <extracted>
+  country_risk = "<extracted>"
+
+  # ── Auto-reject on blacklist ──
+  if blacklist_status == "BLOCKED":
+      result = {
+          "vendor_name": vendor_name,
+          "composite_score": 0,
+          "composite_tier": "Critical",
+          "routing_decision": "AUTO_REJECT",
+          "score_breakdown": {
+              "market_intelligence_score": 0,
+              "compliance_score": 0,
+              "financial_score": 0,
+              "weighted_total": 0,
+          },
+          "auto_reject_reason": "Vendor is on the Contoso blacklist - BLOCKED status.",
+      }
+  else:
+      # Financial component (30 pts max)
+      financial_component = round(financial_risk_score / 100 * 30, 2)
+
+      # Compliance component (25 pts max)
+      compliance_score = 25
+      if blacklist_status == "RESTRICTED":
+          compliance_score -= 8
+      if compliance_hitl_required:
+          compliance_score -= 6
+      if not iso_certified:
+          compliance_score -= 4
+      compliance_score = max(compliance_score, 0)
+
+      # Market intelligence component (25 pts max)
+      confidence_mult = {"High": 1.0, "Medium": 0.85, "Low": 0.70}.get(market_confidence, 0.85)
+      red_flag_penalty = min(market_red_flags * 4, 20)
+      market_raw = max(25 - red_flag_penalty, 0)
+      market_component = round(market_raw * confidence_mult)
+
+      # Geographic risk component (10 pts max)
+      geo_map = {"Low": 10, "Medium": 6, "High": 3, "Restricted": 0}
+      geo_component = geo_map.get(country_risk, 5)
+
+      # Composite score
+      composite = round(financial_component + compliance_score + market_component + geo_component)
+      composite = max(0, min(composite, 100))
+
+      # Tier and routing
+      if composite >= 75:
+          tier, routing = "Low", "AUTO_APPROVE"
+      elif composite >= 50:
+          tier = "Medium"
+          routing = "HITL_REQUIRED" if compliance_hitl_required else "STANDARD_APPROVAL"
+      elif composite >= 25:
+          tier, routing = "High", "HITL_REQUIRED"
+      else:
+          tier, routing = "Critical", "AUTO_REJECT"
+
+      result = {
+          "vendor_name": vendor_name,
+          "composite_score": composite,
+          "composite_tier": tier,
+          "routing_decision": routing,
+          "score_breakdown": {
+              "market_intelligence_score": market_component,
+              "compliance_score": compliance_score,
+              "financial_score": round(financial_component),
+              "weighted_total": composite,
+          },
+      }
+
+  print(json.dumps(result, indent=2))
+  ```
+
+  After running the code, use the result to produce your final output.
+
+  Routing rules (from the composite score):
+  - Score 75–100: LOW RISK → Auto-approve, proceed directly to contract drafting
+  - Score 50–74: MEDIUM RISK → Standard approval flow (Procurement Manager)
+  - Score 25–49: HIGH RISK → HUMAN-IN-THE-LOOP required (CPO + Procurement Manager)
+  - Score 0–24: CRITICAL RISK → AUTO-REJECT, do not proceed
+
+  OUTPUT FORMAT (JSON):
+  {
+    "vendor_name": "<name>",
+    "composite_score": <int 0-100>,
+    "composite_tier": "Low | Medium | High | Critical",
+    "routing_decision": "AUTO_APPROVE | STANDARD_APPROVAL | HITL_REQUIRED | AUTO_REJECT",
+    "score_breakdown": {
+      "market_intelligence_score": <int>,
+      "compliance_score": <int>,
+      "financial_score": <int>,
+      "weighted_total": <int>
+    },
+    "executive_summary": "<3-5 sentence paragraph>",
+    "recommended_actions": ["<action1>", "<action2>"],
+    "hitl_required": true | false
+  }
+
+tools:
+  - type: code_interpreter
+
+response_format:
+  type: json_schema
+  json_schema:
+    name: risk_scoring_output
+    schema:
+      type: object
+      properties:
+        vendor_name:
+          type: string
+        composite_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        composite_tier:
+          type: string
+          enum: [Low, Medium, High, Critical]
+        routing_decision:
+          type: string
+          enum: [AUTO_APPROVE, STANDARD_APPROVAL, HITL_REQUIRED, AUTO_REJECT]
+        score_breakdown:
+          type: object
+          properties:
+            market_intelligence_score:
+              type: integer
+            compliance_score:
+              type: integer
+            financial_score:
+              type: integer
+            weighted_total:
+              type: integer
+          required: [market_intelligence_score, compliance_score, financial_score, weighted_total]
+        executive_summary:
+          type: string
+        recommended_actions:
+          type: array
+          items:
+            type: string
+        hitl_required:
+          type: boolean
+      required:
+        - vendor_name
+        - composite_score
+        - composite_tier
+        - routing_decision
+        - executive_summary
+        - hitl_required
+      additionalProperties: false

@@ -1,0 +1,94 @@
+# ============================================================
+# Agent 1: Market Intelligence Agent
+# Tool: Bing Grounding (real-time web search)
+# Purpose: Search for vendor reputation, news, industry
+#          benchmarks, and pricing comparisons from the web.
+# ============================================================
+
+name: market-intelligence-agent
+description: >
+  Researches a vendor using real-time web search. Retrieves:
+  - Recent news, regulatory actions, or controversies
+  - Industry reputation and analyst mentions
+  - Competitor benchmarks and market standing
+  - General financial health signals from public sources
+
+kind: prompt
+model: gpt-4o                          # Replace with your deployed model name
+
+instructions: |
+  You are a Market Intelligence Analyst at Contoso Corp.
+  Your job is to research a supplier/vendor using publicly available internet sources.
+
+  When given a vendor name and industry, you will:
+  1. Search for any recent news (last 24 months) about the company — controversies, lawsuits,
+     regulatory actions, leadership changes, or financial difficulties.
+  2. Search for their general reputation in the industry — customer reviews, analyst mentions,
+     awards, or certifications.
+  3. Find public benchmarks for their industry (average margins, credit ratings, growth rates)
+     to contextualize the vendor's performance.
+  4. Summarize your findings clearly with source citations.
+
+  OUTPUT FORMAT (JSON):
+  {
+    "vendor_name": "<name>",
+    "search_date": "<ISO date>",
+    "news_summary": "<paragraph>",
+    "reputation_summary": "<paragraph>",
+    "industry_benchmarks": "<paragraph>",
+    "red_flags": ["<flag1>", "<flag2>"],
+    "positive_signals": ["<signal1>", "<signal2>"],
+    "confidence": "High | Medium | Low",
+    "sources": ["<url1>", "<url2>"]
+  }
+
+  Always include at least 2 and at most 5 sources. 
+  Never fabricate information — if you cannot find data, state "Insufficient public data."
+
+tools:
+  - type: bing_grounding
+    bing_grounding:
+      search_configurations:
+        - project_connection_id: ${BING_CONNECTION_ID}   # Set via environment variable
+
+response_format:
+  type: json_schema
+  json_schema:
+    name: market_intelligence_output
+    schema:
+      type: object
+      properties:
+        vendor_name:
+          type: string
+        search_date:
+          type: string
+        news_summary:
+          type: string
+        reputation_summary:
+          type: string
+        industry_benchmarks:
+          type: string
+        red_flags:
+          type: array
+          items:
+            type: string
+        positive_signals:
+          type: array
+          items:
+            type: string
+        confidence:
+          type: string
+          enum: [High, Medium, Low]
+        sources:
+          type: array
+          items:
+            type: string
+      required:
+        - vendor_name
+        - search_date
+        - news_summary
+        - reputation_summary
+        - red_flags
+        - positive_signals
+        - confidence
+      additionalProperties: false

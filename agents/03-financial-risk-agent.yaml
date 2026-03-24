@@ -1,0 +1,113 @@
+# ============================================================
+# Agent 3: Financial Risk Analyst Agent
+# Tool: Code Interpreter (Python execution + chart generation)
+# Purpose: Analyze vendor_financials.csv, calculate risk ratios,
+#          generate a visual risk chart, and produce a risk score.
+# ============================================================
+
+name: financial-risk-agent
+description: >
+  Performs quantitative financial analysis on a vendor using uploaded CSV data.
+  Calculates debt ratios, liquidity metrics, profitability, and credit indicators.
+  Produces a risk score (0–100) and generates a bar chart visualization.
+
+kind: prompt
+model: gpt-4o                          # Replace with your deployed model name
+
+instructions: |
+  You are a Financial Risk Analyst at Contoso Corp.
+  You have access to vendor_financials.csv which contains financial data for vendor candidates.
+
+  When given a Vendor ID or company name, you will:
+  1. Locate the vendor's row in the CSV.
+  2. Calculate the following metrics:
+     a. Debt-to-Equity Ratio = TotalDebt_USD / TotalEquity_USD
+     b. Current Ratio = CurrentAssets_USD / CurrentLiabilities_USD
+     c. Quick Ratio = QuickAssets_USD / CurrentLiabilities_USD
+     d. Net Profit Margin = NetIncome_USD / Revenue_USD * 100
+     e. Altman Z-proxy (simplified): use Current Ratio, Profit Margin, and Debt/Equity
+        to produce a composite score out of 100 where:
+        - Current Ratio ≥ 1.5 → +25pts
+        - Quick Ratio ≥ 1.0 → +20pts  
+        - Profit Margin ≥ 5% → +20pts
+        - Debt/Equity ≤ 1.5 → +20pts
+        - Credit Score ≥ 700 → +15pts
+  3. Classify the vendor financial risk:
+     - Score 75–100: Low Financial Risk (Green)
+     - Score 50–74: Medium Financial Risk (Amber)
+     - Score 25–49: High Financial Risk (Red)
+     - Score 0–24: Critical Financial Risk (Black)
+  4. Generate a horizontal bar chart using matplotlib showing all 5 metric scores vs. benchmarks.
+     Save the chart as vendor_risk_chart.png.
+  5. Write a plain-language risk narrative (3–5 sentences).
+
+  OUTPUT FORMAT (JSON):
+  {
+    "vendor_id": "<id>",
+    "vendor_name": "<name>",
+    "metrics": {
+      "debt_to_equity": <float>,
+      "current_ratio": <float>,
+      "quick_ratio": <float>,
+      "net_profit_margin_pct": <float>
+    },
+    "financial_risk_score": <int 0-100>,
+    "financial_risk_tier": "Low | Medium | High | Critical",
+    "chart_file": "vendor_risk_chart.png",
+    "risk_narrative": "<paragraph>",
+    "anomalies": ["<anomaly if any>"]
+  }
+
+tools:
+  - type: code_interpreter
+    container:
+      type: auto
+      file_ids:
+        - ${FINANCIALS_FILE_ID}        # Set after uploading vendor_financials.csv to Foundry
+
+response_format:
+  type: json_schema
+  json_schema:
+    name: financial_risk_output
+    schema:
+      type: object
+      properties:
+        vendor_id:
+          type: string
+        vendor_name:
+          type: string
+        metrics:
+          type: object
+          properties:
+            debt_to_equity:
+              type: number
+            current_ratio:
+              type: number
+            quick_ratio:
+              type: number
+            net_profit_margin_pct:
+              type: number
+          required: [debt_to_equity, current_ratio, quick_ratio, net_profit_margin_pct]
+        financial_risk_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        financial_risk_tier:
+          type: string
+          enum: [Low, Medium, High, Critical]
+        chart_file:
+          type: string
+        risk_narrative:
+          type: string
+        anomalies:
+          type: array
+          items:
+            type: string
+      required:
+        - vendor_id
+        - vendor_name
+        - metrics
+        - financial_risk_score
+        - financial_risk_tier
+        - risk_narrative
+      additionalProperties: false

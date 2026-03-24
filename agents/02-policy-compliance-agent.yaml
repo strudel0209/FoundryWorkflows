@@ -1,0 +1,127 @@
+# ============================================================
+# Agent 2: Policy & Compliance Agent
+# Tool: File Search (RAG over internal documents)
+# Purpose: Check vendor against internal procurement policy,
+#          blacklist, and compliance requirements.
+# ============================================================
+
+name: policy-compliance-agent
+description: >
+  Checks a vendor against Contoso's internal procurement policies and blacklist.
+  Uses File Search (RAG) over uploaded policy documents to determine:
+  - Whether the vendor appears on the blacklist
+  - Which procurement tier applies
+  - What approvals are required
+  - Which compliance gaps exist
+
+kind: prompt
+model: gpt-4o                          # Replace with your deployed model name
+
+instructions: |
+  You are a Procurement Compliance Officer at Contoso Corp.
+  You have access to Contoso's internal documents:
+  - procurement_policy.md — detailed procurement rules, tier thresholds, and screening requirements
+  - vendor_blacklist.md — list of banned vendors with reasons
+
+  When given a vendor profile (name, country, industry, financials), you will:
+  1. Check if the vendor name (or close variants) appears in vendor_blacklist.md.
+     - If found: state the reason and date. Mark as BLOCKED.
+  2. Determine the vendor's procurement Tier (1–4) based on estimated contract value and 
+     the tier table in procurement_policy.md.
+  3. Check if the vendor meets each mandatory screening requirement from Section 4 of the policy:
+     - Blacklist/sanctions check (you handle step 1 above)
+     - Financial ratios (Debt-to-Equity ≤ 2.0, Current Ratio ≥ 1.2, Credit Score ≥ 650)
+     - ISO certification requirements for Tier 1/2
+     - Country risk (check against Appendix A restricted countries list)
+  4. Identify whether Human-in-the-Loop approval is required (Section 6 of the policy).
+  5. List any compliance gaps the vendor must address before onboarding.
+
+  OUTPUT FORMAT (JSON):
+  {
+    "vendor_name": "<name>",
+    "blacklist_status": "CLEAR | BLOCKED | RESTRICTED",
+    "blacklist_details": "<reason if applicable, else null>",
+    "procurement_tier": 1 | 2 | 3 | 4,
+    "financial_checks": {
+      "debt_to_equity_pass": true | false,
+      "current_ratio_pass": true | false,
+      "credit_score_pass": true | false,
+      "details": "<explanation>"
+    },
+    "iso_certification_required": true | false,
+    "iso_certification_present": true | false,
+    "country_risk": "Low | Medium | High | Restricted",
+    "hitl_required": true | false,
+    "hitl_reasons": ["<reason1>"],
+    "compliance_gaps": ["<gap1>", "<gap2>"],
+    "approval_chain": ["<role1>", "<role2>"],
+    "policy_sections_referenced": ["Section 4.1", "Section 6"]
+  }
+
+tools:
+  - type: file_search
+    vector_store_ids:
+      - ${POLICY_VECTOR_STORE_ID}      # Set after uploading to Foundry
+
+response_format:
+  type: json_schema
+  json_schema:
+    name: compliance_output
+    schema:
+      type: object
+      properties:
+        vendor_name:
+          type: string
+        blacklist_status:
+          type: string
+          enum: [CLEAR, BLOCKED, RESTRICTED]
+        blacklist_details:
+          type: [string, "null"]
+        procurement_tier:
+          type: integer
+          minimum: 1
+          maximum: 4
+        financial_checks:
+          type: object
+          properties:
+            debt_to_equity_pass:
+              type: boolean
+            current_ratio_pass:
+              type: boolean
+            credit_score_pass:
+              type: boolean
+            details:
+              type: string
+          required: [debt_to_equity_pass, current_ratio_pass, credit_score_pass, details]
+        iso_certification_required:
+          type: boolean
+        iso_certification_present:
+          type: boolean
+        country_risk:
+          type: string
+          enum: [Low, Medium, High, Restricted]
+        hitl_required:
+          type: boolean
+        hitl_reasons:
+          type: array
+          items:
+            type: string
+        compliance_gaps:
+          type: array
+          items:
+            type: string
+        approval_chain:
+          type: array
+          items:
+            type: string
+        policy_sections_referenced:
+          type: array
+          items:
+            type: string
+      required:
+        - vendor_name
+        - blacklist_status
+        - procurement_tier
+        - hitl_required
+        - compliance_gaps
+      additionalProperties: false

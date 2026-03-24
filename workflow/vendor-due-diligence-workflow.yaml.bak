@@ -1,0 +1,329 @@
+#
+# Vendor Due Diligence Workflow
+# Pattern: Sequential with Human-in-the-Loop (HITL) branch
+# 
+# Flow:
+#   1. Market Intelligence (Bing Grounding)
+#   2. Policy & Compliance Check (File Search)
+#   3. Financial Risk Analysis (Code Interpreter)
+#   4. Risk Scoring (Function Calling)
+#   5a. [If HIGH/CRITICAL] → HITL: Human Approval
+#   5b. [If LOW/MEDIUM]    → Auto-proceed
+#   6. Contract Drafting (File Search)
+#
+kind: Workflow
+trigger:
+  kind: OnConversationStart
+  id: vendor_due_diligence_workflow
+  actions:
+
+    # ─────────────────────────────────────────────────────────
+    # STEP 0: Capture the initial vendor request from the user
+    # ─────────────────────────────────────────────────────────
+    - kind: SetVariable
+      id: capture_vendor_request
+      displayName: Capture Vendor Request
+      variable: Local.VendorRequest
+      value: =System.LastMessage.Text
+
+    - kind: SendActivity
+      id: welcome_message
+      displayName: Send Welcome Message
+      activity: >
+        Starting vendor due diligence workflow for your request.
+        I will now run 4 sequential analysis agents before presenting a risk decision.
+        This may take a moment ⏳
+
+    # ─────────────────────────────────────────────────────────
+    # STEP 1: Market Intelligence Agent (Bing Grounding)
+    # ─────────────────────────────────────────────────────────
+    - kind: InvokeAzureAgent
+      id: market_intelligence_step
+      displayName: "Step 1 — Market Intelligence (Bing Grounding)"
+      agent:
+        name: market-intelligence-agent
+      conversationId: =System.ConversationId
+      input:
+        messages: =UserMessage("Research this vendor: " & Local.VendorRequest)
+      output:
+        responseObject: Local.MarketIntelligenceResult
+
+    - kind: SendActivity
+      id: market_done_message
+      displayName: Market Intelligence Complete
+      activity: >
+        ✅ Step 1/4 complete: Market Intelligence analysis done.
+
+    # ─────────────────────────────────────────────────────────
+    # STEP 2: Policy & Compliance Agent (File Search)
+    # ─────────────────────────────────────────────────────────
+    - kind: InvokeAzureAgent
+      id: policy_compliance_step
+      displayName: "Step 2 — Policy & Compliance Check (File Search)"
+      agent:
+        name: policy-compliance-agent
+      conversationId: =System.ConversationId
+      input:
+        messages: =UserMessage("Check vendor compliance for: " & Local.VendorRequest & "\n\nMarket Intelligence context: " & Local.MarketIntelligenceResult)
+      output:
+        responseObject: Local.ComplianceResult
+
+    - kind: SendActivity
+      id: compliance_done_message
+      displayName: Compliance Check Complete
+      activity: >
+        ✅ Step 2/4 complete: Policy & Compliance check done.
+
+    # ─────────────────────────────────────────────────────────
+    # STEP 3: Financial Risk Agent (Code Interpreter)
+    # ─────────────────────────────────────────────────────────
+    - kind: InvokeAzureAgent
+      id: financial_risk_step
+      displayName: "Step 3 — Financial Risk Analysis (Code Interpreter)"
+      agent:
+        name: financial-risk-agent
+      conversationId: =System.ConversationId
+      input:
+        messages: =UserMessage("Perform financial risk analysis for: " & Local.VendorRequest & "\n\nCompliance output: " & Local.ComplianceResult)
+      output:
+        responseObject: Local.FinancialRiskResult
+
+    - kind: SendActivity
+      id: financial_done_message
+      displayName: Financial Analysis Complete
+      activity: >
+        ✅ Step 3/4 complete: Financial risk analysis done. Chart generated.
+
+    # ─────────────────────────────────────────────────────────
+    # STEP 4: Risk Scoring Agent (Function Calling)
+    # ─────────────────────────────────────────────────────────
+    - kind: SetVariable
+      id: build_scoring_input
+      displayName: Build Scoring Agent Input
+      variable: Local.ScoringInput
+      value: ="Calculate composite risk score using:\n\nMARKET INTELLIGENCE:\n" & Local.MarketIntelligenceResult & "\n\nCOMPLIANCE:\n" & Local.ComplianceResult & "\n\nFINANCIAL RISK:\n" & Local.FinancialRiskResult
+
+    - kind: InvokeAzureAgent
+      id: risk_scoring_step
+      displayName: "Step 4 — Composite Risk Scoring (Function Calling)"
+      agent:
+        name: risk-scoring-agent
+      conversationId: =System.ConversationId
+      input:
+        messages: =UserMessage(Local.ScoringInput)
+      output:
+        responseObject: Local.RiskScoringResult
+
+    - kind: SendActivity
+      id: scoring_done_message
+      displayName: Risk Scoring Complete
+      activity: >
+        ✅ Step 4/4 complete: Composite risk score calculated.
+
+    # ─────────────────────────────────────────────────────────
+    # STEP 5: Branch on routing_decision
+    # ─────────────────────────────────────────────────────────
+    - kind: If
+      id: route_on_risk
+      displayName: Route on Risk Decision
+      condition: =Contains(Local.RiskScoringResult, '"routing_decision": "AUTO_REJECT"')
+      actions:
+        # ── AUTO-REJECT branch ───────────────────────────────
+        - kind: SetVariable
+          id: build_reject_message
+          displayName: Build Rejection Message
+          variable: Local.RejectMessage
+          value: ="🚫 VENDOR REJECTED — Critical Risk Score\n\nThis vendor has been automatically rejected based on the composite risk assessment.\nNo further action is required. The procurement request has been closed.\n\nRisk Report:\n" & Local.RiskScoringResult
+        - kind: SendActivity
+          id: auto_reject_message
+          displayName: Auto-Reject Notification
+          activity: =Local.RejectMessage
+        - kind: EndWorkflow
+          id: end_rejected
+          displayName: End Workflow (Rejected)
+
+      elseActions:
+        # ── Check if HITL is needed ──────────────────────────
+        - kind: If
+          id: check_hitl
+          displayName: Check if Human Approval Needed
+          condition: =Contains(Local.RiskScoringResult, '"routing_decision": "HITL_REQUIRED"')
+          actions:
+            # ── HUMAN-IN-THE-LOOP branch ─────────────────────
+            - kind: SetVariable
+              id: build_hitl_report
+              displayName: Build HITL Report Message
+              variable: Local.HitlReportMessage
+              value: ="⚠️ HIGH RISK VENDOR — Human Approval Required\n\nThe automated risk assessment has classified this vendor as HIGH RISK. Please review the full risk report below and provide your decision.\n\n" & Local.RiskScoringResult
+
+            - kind: SendActivity
+              id: hitl_pre_message
+              displayName: Present Risk Report to Human
+              activity: =Local.HitlReportMessage
+
+            - kind: Question
+              id: human_approval_question
+              displayName: "HITL — Procurement Manager Approval"
+              question:
+                text: >
+                  Based on the risk report above, please choose your action:
+                  
+                  • Type APPROVE to proceed with contract drafting
+                  • Type REJECT to decline this vendor
+                  • Type MORE_INFO to request additional information before deciding
+              variable: Local.HumanDecision
+
+            - kind: If
+              id: branch_on_human_decision
+              displayName: Branch on Human Decision
+              condition: =Upper(Trim(Local.HumanDecision)) = "APPROVE"
+              actions:
+                - kind: SetVariable
+                  id: set_approved
+                  variable: Local.ProceedToContract
+                  value: "true"
+              elseActions:
+                - kind: If
+                  id: check_more_info
+                  displayName: Check if More Info Requested
+                  condition: =Upper(Trim(Local.HumanDecision)) = "MORE_INFO"
+                  actions:
+                    - kind: Question
+                      id: more_info_question
+                      displayName: Request Clarification from User
+                      question:
+                        text: >
+                          What additional information do you need about this vendor?
+                          Please describe your concerns and I will research further.
+                      variable: Local.AdditionalInfoRequest
+                    - kind: InvokeAzureAgent
+                      id: followup_research
+                      displayName: Follow-Up Research
+                      agent:
+                        name: market-intelligence-agent
+                      conversationId: =System.ConversationId
+                      input:
+                        messages: =UserMessage("Additional research requested: " & Local.AdditionalInfoRequest & "\n\nOriginal vendor: " & Local.VendorRequest)
+                      output:
+                        responseObject: Local.AdditionalResearch
+                    - kind: SetVariable
+                      id: build_followup_question
+                      displayName: Build Follow-Up Question
+                      variable: Local.FollowupQuestion
+                      value: ="Additional research complete:\n\n" & Local.AdditionalResearch & "\n\nDo you now APPROVE or REJECT this vendor?"
+
+                    - kind: Question
+                      id: final_decision_after_research
+                      displayName: Final Decision After Additional Research
+                      question:
+                        text: =Local.FollowupQuestion
+                      variable: Local.FinalHumanDecision
+                    - kind: If
+                      id: final_approve_check
+                      displayName: Final Approve Check
+                      condition: =Upper(Trim(Local.FinalHumanDecision)) = "APPROVE"
+                      actions:
+                        - kind: SetVariable
+                          id: set_final_approved
+                          variable: Local.ProceedToContract
+                          value: "true"
+                      elseActions:
+                        - kind: SetVariable
+                          id: set_final_rejected
+                          variable: Local.ProceedToContract
+                          value: "false"
+                  elseActions:
+                    - kind: SetVariable
+                      id: set_human_rejected
+                      variable: Local.ProceedToContract
+                      value: "false"
+
+          elseActions:
+            # ── AUTO-APPROVE / STANDARD APPROVAL branch ──────
+            - kind: SetVariable
+              id: set_auto_approved
+              displayName: Set Auto-Approved
+              variable: Local.ProceedToContract
+              value: "true"
+
+    # ─────────────────────────────────────────────────────────
+    # STEP 6: Contract Drafting (if approved)
+    # ─────────────────────────────────────────────────────────
+    - kind: If
+      id: check_proceed_to_contract
+      displayName: Proceed to Contract Drafting?
+      condition: =Local.ProceedToContract = "true"
+      actions:
+        - kind: Question
+          id: gather_contract_details
+          displayName: Gather Contract Deal Terms
+          question:
+            text: >
+              ✅ Vendor approved! To generate the contract, please provide the following details
+              (comma-separated or as a brief description):
+              
+              1. Services/goods to be supplied
+              2. Contract start date (MM/DD/YYYY)
+              3. Contract duration (e.g., 12 months)
+              4. Payment terms (Net 30 / Net 60)
+              5. Your name and title (Contoso signatory)
+          variable: Local.ContractDetails
+
+        - kind: SetVariable
+          id: build_contract_input
+          displayName: Build Contract Drafting Input
+          variable: Local.ContractInput
+          value: ="Draft vendor contract using:\n\nVENDOR INFO: " & Local.VendorRequest & "\n\nRISK REPORT: " & Local.RiskScoringResult & "\n\nDEAL TERMS: " & Local.ContractDetails
+
+        - kind: InvokeAzureAgent
+          id: contract_drafting_step
+          displayName: "Step 6 — Contract Drafting (File Search)"
+          agent:
+            name: contract-drafting-agent
+          conversationId: =System.ConversationId
+          input:
+            messages: =UserMessage(Local.ContractInput)
+          output:
+            responseObject: Local.ContractDraft
+
+        - kind: SetVariable
+          id: build_contract_message
+          displayName: Build Contract Done Message
+          variable: Local.ContractMessage
+          value: ="📄 CONTRACT DRAFT GENERATED\n\nThe vendor contract has been drafted and is ready for legal review.\n\n" & Local.ContractDraft
+
+        - kind: SendActivity
+          id: contract_done_message
+          displayName: Contract Draft Complete
+          activity: =Local.ContractMessage
+
+        - kind: SendActivity
+          id: workflow_complete_message
+          displayName: Workflow Complete
+          activity: >
+            🎉 Vendor Due Diligence Workflow Complete!
+            
+            Summary:
+            - Market Intelligence: ✅
+            - Policy & Compliance: ✅
+            - Financial Risk Analysis: ✅
+            - Risk Scoring: ✅
+            - Human Approval (if required): ✅
+            - Contract Drafted: ✅
+            
+            Next step: Send contract to Legal for final review before signature.
+
+      elseActions:
+        - kind: SendActivity
+          id: rejection_summary
+          displayName: Rejection Summary
+          activity: >
+            ❌ Vendor Due Diligence Workflow Complete — Vendor Rejected.
+            
+            This vendor has not been approved for onboarding.
+            The procurement request has been closed. 
+            Refer to the risk report for details.
+
+    - kind: EndWorkflow
+      id: end_workflow
+      displayName: End Workflow
