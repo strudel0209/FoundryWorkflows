@@ -51,31 +51,84 @@ Foundry-Workflow/
 
 ---
 
-## Workflow Flow
+## Workflow Architecture
 
-```
-[User submits vendor request]
-         ↓
-[Agent 1] Market Intelligence  ──── Bing Grounding ──→ News, reputation, benchmarks
-         ↓
-[Agent 2] Policy & Compliance ──── File Search ──────→ Blacklist + policy checks
-         ↓
-[Agent 3] Financial Risk      ──── Code Interpreter ──→ Ratio analysis + risk chart
-         ↓
-[Agent 4] Risk Scoring        ──── Code Interpreter ──→ Composite score (0–100)
-         ↓
-    ┌────┴────────────────────────────────────────┐
-    │ Score < 25 (Critical)    → AUTO-REJECT       │
-    │ Score 25–49 (High)       → HITL: CPO Approves│
-    │ Score 50–74 (Medium)     → Standard Approval │
-    │ Score 75–100 (Low)       → AUTO-APPROVE      │
-    └────┬────────────────────────────────────────┘
-         ↓ (if Approved)
-[Human-in-the-Loop node]  ─ Procurement Manager reviews + APPROVE/REJECT/MORE_INFO
-         ↓ (APPROVE)
-[Agent 5] Contract Drafting ─── File Search ──────────→ Populated contract draft
-         ↓
-[End: Contract ready for Legal review]
+```mermaid
+flowchart TD
+
+    classDef trigger  fill:#0078D4,stroke:#005A9E,color:#fff
+    classDef agent    fill:#107C10,stroke:#0B5C0B,color:#fff
+    classDef human    fill:#C239B3,stroke:#8E1A84,color:#fff
+    classDef decision fill:#FFB900,stroke:#C08000,color:#1a1a1a
+    classDef approved fill:#107C10,stroke:#0B5C0B,color:#fff
+    classDef rejected fill:#D83B01,stroke:#A02E01,color:#fff
+    classDef infra    fill:#EFF6FC,stroke:#0078D4,color:#004578
+
+    USER(["Procurement Team Submits Vendor Request"])
+
+    subgraph FOUNDRY["Microsoft Azure AI Foundry"]
+      direction TD
+
+      INFRA["setup_agents.py provisions: Policy Vector Store  · Contracts Vector Store  · vendor_financials.csv"]
+
+      subgraph WF["Vendor Due Diligence Workflow"]
+        direction TD
+
+        STEP0["Capture Vendor Request"]
+
+        subgraph PIPE["Sequential Agent Pipeline"]
+          direction TB
+          A1["Agent 1 — Market Intelligence Bing Grounding › web reputation · news · benchmarks"]
+          A2["Agent 2 — Policy & Compliance File Search › Policy Store · Blacklist"]
+          A3["Agent 3 — Financial Risk Code Interpreter › vendor_financials.csv"]
+          A4["Agent 4 — Risk Scoring\nCode Interpreter › composite score 0-100"]
+          A1 --> A2 --> A3 --> A4
+        end
+
+        STEP0 --> A1
+
+        ROUTE{{"Route on Risk Score"}}
+        A4 --> ROUTE
+
+        REJECT1(["AUTO-REJECT Score below 25 - Critical Risk Workflow Terminated"])
+
+        HITL["HITL Gate Procurement Manager reviews full risk report"]
+
+        CONTRACT["Agent 5 — Contract Drafting File Search › Contracts Vector Store"]
+
+        ROUTE -->|"Score below 25 — AUTO_REJECT"| REJECT1
+        ROUTE -->|"Score 25-74 — HITL_REQUIRED"| HITL
+        ROUTE -->|"Score 75+ — AUTO_APPROVE"| CONTRACT
+
+        HUMAN_DEC{{"Human Decision"}}
+        HITL --> HUMAN_DEC
+
+        MOREINFO["Follow-Up Research Agent 1 re-invoked with clarification"]
+        REJECT2(["HUMAN REJECT Vendor Declined"])
+
+        HUMAN_DEC -->|REJECT| REJECT2
+        HUMAN_DEC -->|APPROVE| CONTRACT
+        HUMAN_DEC -->|MORE_INFO| MOREINFO
+
+        FINAL_DEC{{"Final Decision"}}
+        MOREINFO --> FINAL_DEC
+        FINAL_DEC -->|REJECT| REJECT2
+        FINAL_DEC -->|APPROVE| CONTRACT
+
+        DONE(["CONTRACT READY Forwarded to Legal for Signature"])
+        CONTRACT --> DONE
+      end
+    end
+
+    USER --> STEP0
+
+    class USER trigger
+    class A1,A2,A3,A4,CONTRACT agent
+    class HITL,MOREINFO human
+    class ROUTE,HUMAN_DEC,FINAL_DEC decision
+    class DONE approved
+    class REJECT1,REJECT2 rejected
+    class INFRA infra
 ```
 
 ---
