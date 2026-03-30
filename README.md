@@ -8,12 +8,13 @@ A multi-agent **Human-in-the-Loop** workflow built on **Microsoft Foundry Agent 
 
 | Feature | Agent | Tool |
 |---|---|---|
+| Input guardrails | Workflow | Length check + user confirmation |
 | Real-time web search | Market Intelligence | Bing Grounding |
 | RAG over internal docs | Policy & Compliance | File Search |
 | Python code execution + chart generation | Financial Risk | Code Interpreter |
 | Algorithmic risk scoring | Risk Scoring | Code Interpreter |
 | Human approval gate | Workflow node | Human-in-the-Loop (HITL) |
-| Conditional routing | Workflow | If/Else logic node |
+| Conditional routing | Workflow | ConditionGroup logic |
 | Document generation | Contract Drafting | File Search |
 | Structured outputs | All agents | JSON Schema response format |
 
@@ -76,6 +77,15 @@ flowchart TD
 
         STEP0["Capture Vendor Request"]
 
+        GUARD1{{"Input Valid? (length ≥ 5)"}}
+        STEP0 --> GUARD1
+        GUARD1 -->|"Too short / blank"| REJECT0(["INPUT REJECTED\nProvide a valid vendor name"])
+
+        CONFIRM["Confirm Vendor\nYES / CANCEL / corrected name"]
+        GUARD1 -->|"Valid"| CONFIRM
+
+        CONFIRM -->|"CANCEL / NO"| CANCEL0(["WORKFLOW CANCELLED"])
+
         subgraph PIPE["Sequential Agent Pipeline"]
           direction TB
           A1["Agent 1 — Market Intelligence Bing Grounding › web reputation · news · benchmarks"]
@@ -85,7 +95,7 @@ flowchart TD
           A1 --> A2 --> A3 --> A4
         end
 
-        STEP0 --> A1
+        CONFIRM -->|"YES or corrected name"| A1
 
         ROUTE{{"Route on Risk Score"}}
         A4 --> ROUTE
@@ -124,10 +134,10 @@ flowchart TD
 
     class USER trigger
     class A1,A2,A3,A4,CONTRACT agent
-    class HITL,MOREINFO human
-    class ROUTE,HUMAN_DEC,FINAL_DEC decision
+    class HITL,MOREINFO,CONFIRM human
+    class ROUTE,HUMAN_DEC,FINAL_DEC,GUARD1 decision
     class DONE approved
-    class REJECT1,REJECT2 rejected
+    class REJECT0,REJECT1,REJECT2,CANCEL0 rejected
     class INFRA infra
 ```
 
@@ -246,6 +256,11 @@ This runs 3 test cases showing Low, High, and Auto-Reject scoring scenarios.
 
 After saving the workflow in the Foundry canvas, click **Run Workflow** and paste one of the test inputs below. Each scenario exercises a different risk path through the pipeline.
 
+> **Note:** The workflow now includes input guardrails. After you submit your vendor request,
+> the workflow will echo it back and ask you to confirm with **YES**, type **CANCEL** to abort,
+> or type a corrected vendor name. Inputs shorter than 5 characters (e.g., `?`, `hi`) are
+> rejected immediately.
+
 | Test Input | Expected Path |
 |---|---|
 | Nexus Supply Co., USA, Manufacturing, $4.5M revenue | Low risk → AUTO_APPROVE → contract drafting |
@@ -272,5 +287,5 @@ After saving the workflow in the Foundry canvas, click **Run Workflow** and past
 - [ ] Add evaluation dataset for agent quality scoring
 - [ ] Optionally deploy scoring API as an Azure Function (currently runs via Code Interpreter)
 - [ ] Add Application Insights telemetry
-- [ ] Configure workflow guardrails in Foundry portal
+- [x] Configure workflow guardrails in Foundry portal
 - [ ] Add a `scripts/teardown_agents.py` to clean up created resources

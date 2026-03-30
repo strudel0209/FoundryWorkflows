@@ -180,6 +180,24 @@ def main():
     agents_created = {}
     agents_skipped = {}
 
+    # --- Agent 0: Intent Classifier (no tools) ---
+    if agent_exists(project, "intent-classifier-agent"):
+        agents_skipped["intent-classifier-agent"] = True
+        print(f"  ● intent-classifier-agent (already exists)")
+    else:
+        agent0_instructions = read_yaml_instructions(AGENTS_DIR / "00-intent-classifier-agent.yaml")
+        agent0 = project.agents.create_version(
+            agent_name="intent-classifier-agent",
+            definition=PromptAgentDefinition(
+                model=MODEL_NAME,
+                instructions=agent0_instructions,
+                tools=[],
+            ),
+            description="Classifies user intent and extracts vendor details for workflow routing.",
+        )
+        agents_created["intent-classifier-agent"] = agent0
+        print(f"  ✓ intent-classifier-agent (v{agent0.version})")
+
     # --- Agent 1: Market Intelligence (Bing Grounding) ---
     if agent_exists(project, "market-intelligence-agent"):
         agents_skipped["market-intelligence-agent"] = True
@@ -313,6 +331,8 @@ def main():
     print("       OR toggle the YAML view and paste the content of")
     print("       workflow/vendor-due-diligence-workflow.yaml")
     print("    3. Assign each 'Invoke agent' node to the agents created above")
+    print("       (6 agents: intent-classifier, market-intelligence, policy-compliance,")
+    print("        financial-risk, risk-scoring, contract-drafting)")
     print("    4. Save and click 'Run Workflow' to test")
     print()
 

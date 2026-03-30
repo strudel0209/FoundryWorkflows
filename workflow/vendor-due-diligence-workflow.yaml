@@ -7,6 +7,7 @@
 # This follows the official microsoft/agent-framework samples.
 #
 # Flow:
+#   0. Intent Classification (LLM-based routing)
 #   1. Market Intelligence (Bing Grounding)
 #   2. Policy & Compliance Check (File Search)
 #   3. Financial Risk Analysis (Code Interpreter)
@@ -22,17 +23,57 @@ trigger:
   id: vendor_due_diligence_workflow
   actions:
 
-    # STEP 0: Capture the initial vendor request from the user
-    - kind: SetVariable
-      id: capture_vendor_request
-      displayName: Capture Vendor Request
-      variable: Local.VendorRequest
-      value: =System.LastMessage.Text
+    # STEP 0: Intent Classification — LLM determines if this is a vendor request
+    # NOTE: conversationId is intentionally omitted here. This agent returns
+    # structured JSON for internal workflow routing — not for user display.
+    # Omitting conversationId runs it in an isolated ephemeral conversation
+    # so the JSON never appears in the user's chat. Foundry traces still
+    # capture the invocation for logging/monitoring purposes.
+    - kind: InvokeAzureAgent
+      id: classify_intent
+      displayName: "Step 0 - Classify User Intent"
+      agent:
+        name: intent-classifier-agent
+      input:
+        messages: =UserMessage(System.LastMessage.Text)
+      output:
+        responseObject: Local.IntentResult
+        autoSend: false
 
-    - kind: SendActivity
-      id: welcome_message
-      displayName: Send Welcome Message
-      activity: "Starting vendor due diligence workflow for your request. I will now run 4 sequential analysis agents before presenting a risk decision. This may take a moment."
+    - kind: ConditionGroup
+      id: route_on_intent
+      displayName: Route Based on Intent
+      conditions:
+        - id: intent_is_vendor
+          condition: =Local.IntentResult.intent = "vendor_diligence"
+          actions:
+            - kind: SetVariable
+              id: set_vendor_from_intent
+              displayName: Set Vendor Request from Intent
+              variable: Local.VendorRequest
+              value: =Local.IntentResult.vendor_query
+            - kind: SendActivity
+              id: welcome_message
+              displayName: Send Welcome Message
+              activity: "Starting vendor due diligence. Running 4 sequential analysis agents now."
+      elseActions:
+        # Greet the user and ask for vendor details
+        - kind: Question
+          id: ask_vendor_details
+          displayName: Greet and Ask for Vendor Details
+          variable: Local.VendorRequest
+          prompt: |-
+            Hi there! I'm the Vendor Due Diligence Assistant for Contoso Corp.
+            I help evaluate vendors by running market intelligence, compliance checks, financial risk analysis, and risk scoring — all automated.
+
+            To get started, please provide the vendor name and any relevant context.
+            For example: "Northwind Traders, a logistics company in Germany, estimated contract $500K"
+          entity: StringPrebuiltEntity
+          alwaysPrompt: false
+        - kind: SendActivity
+          id: welcome_after_ask
+          displayName: Confirm Vendor and Start
+          activity: "Starting vendor due diligence. Running 4 sequential analysis agents now."
 
     # STEP 1: Market Intelligence Agent (Bing Grounding)
     - kind: InvokeAzureAgent
@@ -55,7 +96,7 @@ trigger:
     - kind: SendActivity
       id: market_done_message
       displayName: Market Intelligence Complete
-      activity: "Step 1/4 complete: Market Intelligence analysis done."
+      activity: "Step 1/4 done. Market Intelligence analysis complete."
 
     # STEP 2: Policy & Compliance Agent (File Search)
     - kind: InvokeAzureAgent
@@ -78,7 +119,7 @@ trigger:
     - kind: SendActivity
       id: compliance_done_message
       displayName: Compliance Check Complete
-      activity: "Step 2/4 complete: Policy and Compliance check done."
+      activity: "Step 2/4 done. Policy and Compliance check complete."
 
     # STEP 3: Financial Risk Agent (Code Interpreter)
     - kind: InvokeAzureAgent
@@ -101,7 +142,7 @@ trigger:
     - kind: SendActivity
       id: financial_done_message
       displayName: Financial Analysis Complete
-      activity: "Step 3/4 complete: Financial risk analysis done."
+      activity: "Step 3/4 done. Financial risk analysis complete."
 
     # STEP 4: Risk Scoring Agent (Code Interpreter)
     - kind: SetVariable
@@ -130,7 +171,7 @@ trigger:
     - kind: SendActivity
       id: scoring_done_message
       displayName: Risk Scoring Complete
-      activity: "Step 4/4 complete: Composite risk score calculated."
+      activity: "Step 4/4 done. Composite risk score calculated."
 
     # STEP 5: Branch on routing_decision
     - kind: ConditionGroup
