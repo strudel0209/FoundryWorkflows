@@ -332,9 +332,3 @@ trigger:
             This vendor has not been approved for onboarding.
             The procurement request has been closed.
             Refer to the risk report for details.
-
-    - kind: EndWorkflow
-      id: end_workflow
-      displayName: End Workflow
-id: ""
-description: ""
